@@ -1,9 +1,10 @@
-/*! kkr-pym.js - v1.0.0 - 2015-05-12 */
-/*! kkr-pym.js - v1.0.0 - 2015-05-12 */
+/*! kkr-pym.js @ v1.0.0 from git://github.com/iamjochem/pym.js.git - 2015-05-12 */
 /*
-* Pym.js is library that resizes an iframe based on the width of the parent and the resulting height of the child.
-* Check out the docs at http://blog.apps.npr.org/pym.js/ or the readme at README.md for usage.
-*/
+ * This is a derivative of pym.js
+ *
+ * Pym.js is library that resizes an iframe based on the width of the parent and the resulting height of the child.
+ * Check out the docs at http://blog.apps.npr.org/pym.js/ or the readme at README.md for usage.
+ */
 
 /* global module */
 
@@ -19,8 +20,10 @@
     var MESSAGE_DELIMITER = 'xPYMx';
 
     var lib     = {kkr: {}};
-    var parents = []; // Parent instances
-    var childs  = []; // Child instances
+
+    var parents             = []; // Parent instances
+    var childs              = []; // Child instances
+    var kkrModalListeners   = []; // 'global' listeners for updates to the modal-offset value
 
     var kkr_id        = 'kkr-iframe';
     var kkr_body_attr = 'data-kkr-iframe-pos';
@@ -330,12 +333,12 @@
             }
         }     
 
-        fn = throttle(parentSend, 32);
+        fn = throttle(parentSend, 16);
 
         on('resize', fn);
         on('scroll', fn);
 
-        setInterval(childSend, 32);
+        setInterval(childSend, 16);
     }
 
     /**
@@ -396,9 +399,9 @@
      * 
      * @return {Object|null}
      */
-    lib.kkr.getModalOffset          = function() {
+    lib.kkr.getModalOffset          = function(o) {
         try {
-            var v = lib.kkr.getIframePosData();
+            var v = o || lib.kkr.getIframePosData();
 
             if (v.offset.top < v.scroll.top) {
                 v = pint(v.scroll.top - v.offset.top);
@@ -411,6 +414,18 @@
 
         return 0;
     };    
+
+
+    /**
+     * returns the name of the "data-" attribute which may be set on the body of 
+     * the child document - if set it contains an object specifying actual position/offset 
+     * of the iframe. 
+     * 
+     * @return {String}
+     */
+    lib.kkr.addModalOffsetListener = function(fn) {
+        kkrModalListeners.push(fn);        
+    };
 
     /**
      * The Parent half of a response iframe.
@@ -831,7 +846,20 @@
 
         // set message listener for our custom/automatic position messager
         this.onMessage('position', function(msg) {
+            var i = 0, 
+                l = kkrModalListeners.length,
+                v = offset.decode(msg)
+                ;
+
             b.setAttribute(kkr_body_attr, msg);
+
+            if (!v) {
+                return;
+            }
+        
+            for (; i < l; i += 1) {
+                kkrModalListeners[i].call(null, lib.kkr.getModalOffset(v));
+            }            
         });
 
         return this;
