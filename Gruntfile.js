@@ -20,6 +20,7 @@ module.exports = function(grunt) {
         unused: true,
         boss: true,
         eqnull: true,
+        browser: true,
       },
       files: [
         "Gruntfile.js",
@@ -49,7 +50,7 @@ module.exports = function(grunt) {
         },
         unminified: {
             src: ['src/pym.js'],
-            dest: 'dist/pym.js'
+            dest: 'dist/kkr-pym.<%= pkg.version %>.js'
         }
     },
     uglify: {
@@ -59,7 +60,7 @@ module.exports = function(grunt) {
       },
       minified: {
         files: {
-          'dist/pym.min.js': ['src/pym.js']
+          'dist/kkr-pym.<%= pkg.version %>.min.js': ['src/pym.js']
         }
       }
     },

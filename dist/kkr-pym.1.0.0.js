@@ -1,4 +1,5 @@
-/*! pym.js - v0.4.2 - 2015-04-24 */
+/*! kkr-pym.js - v1.0.0 - 2015-05-12 */
+/*! kkr-pym.js - v1.0.0 - 2015-05-12 */
 /*
 * Pym.js is library that resizes an iframe based on the width of the parent and the resulting height of the child.
 * Check out the docs at http://blog.apps.npr.org/pym.js/ or the readme at README.md for usage.
@@ -17,7 +18,164 @@
 })(function() {
     var MESSAGE_DELIMITER = 'xPYMx';
 
-    var lib = {};
+    var lib     = {kkr: {}};
+    var parents = []; // Parent instances
+    var childs  = []; // Child instances
+
+    var kkr_id        = 'kkr-iframe';
+    var kkr_body_attr = 'data-kkr-iframe-pos';
+
+    var w  = window;
+    var d  = document;
+    var b  = d.getElementsByTagName('body')[0];
+    var ie = !!w.attachEvent;
+
+    /**
+     * parseInt wrapper (fixed to base 10)
+     * 
+     * @param  {Number} i 
+     * @return {Number}   
+     */
+    function pint(i) 
+    {
+        return parseInt(i, 10);
+    }
+
+    /**
+     * simple throttling function - used to limit triggering event handlers for
+     * resize/scroll/etc events 
+     * 
+     * @param  {Function} fn        
+     * @param  {Number}   threshold     - milliseconds
+     * @return {Function}             
+     */
+    function throttle(fn, threshold)
+    {
+        var to;
+
+        return function() {
+            var context = this, params = arguments;
+
+            w.clearTimeout(to);
+
+            to = w.setTimeout(function() {
+                fn.apply(context, params);
+            }, threshold);
+        };
+    }
+
+    /**
+     * v. simple window event listener binding
+     * 
+     * @param  {String}   ev         
+     * @param  {Function} fn         
+     * @param  {Boolean}   useCapture 
+     * @return {?}              
+     */
+    function on(ev, fn, useCapture) 
+    {
+        return ie ? w.attachEvent('on' + ev, fn) : w.addEventListener(ev, fn, useCapture);
+    } 
+
+    /**
+     * returns offset/position data regarding the given node
+     * 
+     * @param  {DOMNode} element 
+     * @return {Object}         
+     */
+    function offset(element)
+    {
+        var body    = d.body,
+            win     = d.defaultView,
+            docElem = d.documentElement,
+            box     = d.createElement('div');
+
+        var clientTop,
+            clientLeft,
+            scrollTop,
+            scrollLeft,
+            isBoxModel;
+
+        box.style.paddingLeft = box.style.width = "1px";
+        
+        body.appendChild(box);
+        isBoxModel = pint(box.offsetWidth) === 2;
+        body.removeChild(box);
+
+        box = element.getBoundingClientRect();
+
+        clientTop  = docElem.clientTop  || body.clientTop  || 0;
+        clientLeft = docElem.clientLeft || body.clientLeft || 0;
+        scrollTop  = win.pageYOffset || isBoxModel && docElem.scrollTop  || body.scrollTop;
+        scrollLeft = win.pageXOffset || isBoxModel && docElem.scrollLeft || body.scrollLeft;
+
+        return {
+            client : {
+                top    : pint(clientTop),
+                left   : pint(clientLeft)
+            },
+            scroll : {
+                top    : pint(scrollTop),
+                left   : pint(scrollLeft)
+            },
+            offset : {
+                top    : pint(box.top  + scrollTop  - clientTop),
+                left   : pint(box.left + scrollLeft - clientLeft)
+            },
+        };
+    }
+
+    /**
+     * encode (for message passing) the return value of offset()
+     * 
+     * @param  {Object} o 
+     * @return {String}   
+     */
+    offset.encode = function(o) {
+        return [
+            o.client.top    || 0, 
+            o.client.left   || 0, 
+            o.scroll.top    || 0, 
+            o.scroll.left   || 0, 
+            o.offset.top    || 0, 
+            o.offset.left   || 0].join('.');
+    };
+
+    /**
+     * decode (after message passing) the return value of offset.encode()
+     * 
+     * @param  {String} o 
+     * @return {Object}   
+     */
+    offset.decode = function(o) {
+        var v = o.split('.');
+
+        return {
+            client : {
+                top    : pint(v[0]),
+                left   : pint(v[1])
+            },
+            scroll : {
+                top    : pint(v[2]),
+                left   : pint(v[3])
+            },
+            offset : {
+                top    : pint(v[4]),
+                left   : pint(v[5])
+            },
+        };
+    };
+
+    /**
+     * returns height of the body
+     * 
+     * @return {Number}
+     */
+    function height() 
+    { 
+        return b.offsetHeight; 
+    }
+        
 
     /**
     * Generic function for parsing URL params.
@@ -89,11 +247,14 @@
      * @method _autoInit
      */
     var _autoInit = function() {
+        var parent;
+        
         var elements = document.querySelectorAll(
             '[data-pym-src]:not([data-pym-auto-initialized])'
         );
 
-        var length = elements.length;
+        var autoloaded = [];
+        var length     = elements.length;
 
         for (var idx = 0; idx < length; ++idx) {
             var element = elements[idx];
@@ -118,9 +279,138 @@
                config.xdomain = xdomain;
             }
 
-            new lib.Parent(element.id, src, config);
+            parent = new lib.Parent(element.id, src, config);
+            
+            autoloaded.push(parent);
+            autoloaded[element.id] = parent;
+        }
+        
+        if (autoloaded.length) {
+            lib.autoloaded = autoloaded;
         }
     };
+
+    /**
+     * Setup custom watchers & interval functions that automatically 
+     * communicate document height (from Child to Parent) and iframe offset/position (from Parent to Child)
+     * at regular intervals (once every 32ms)
+     *
+     * @method _initWatchers
+     */
+    function _initWatchers()
+    {
+        var lasth = null, fn; // previous body height value
+
+        function childSend() 
+        {
+            var h = height(), l = childs.length, i = 0;
+
+            if (!l || lasth === h) {
+                return;
+            }
+
+            lasth = h;
+
+            for (; i < l; i += 1) {
+                childs[i].sendHeight();
+            }
+        } 
+
+        function parentSend() 
+        {
+            var l = parents.length, i = 0, parent;
+
+            if (!l) {
+                return;
+            }
+
+            for (; i < l; i += 1) {
+                parent = parents[i];
+                parent.sendMessage('position', offset.encode(offset(parent.iframe)));
+            }
+        }     
+
+        fn = throttle(parentSend, 32);
+
+        on('resize', fn);
+        on('scroll', fn);
+
+        setInterval(childSend, 32);
+    }
+
+    /**
+     * kkr-specific wrapper for `new lib.Parent()` - we force a specific value for 'id'
+     * 
+     * @param  {String} url    [description]
+     * @param  {Object} config [description]
+     * @return {Object}        [description]
+     */
+    lib.kkr.genParent = function(url, config) {
+        return lib.Parent(kkr_id, url, config);
+    };
+
+    /**
+     * kkr-specific wrapper for `new lib.Child()` - we force a specific value for 'id'
+     * 
+     * @param  {Object} config 
+     * @return {Object}        
+     */
+    lib.kkr.genChild = function(config) {
+        if (!config) {
+            config = {};
+        }
+
+        config.id = kkr_id;
+        return new lib.Child(config);
+    };
+
+    /**
+     * returns the name of the "data-" attribute which may be set on the body of 
+     * the child document - if set it contains an object specifying actual position/offset 
+     * of the iframe. 
+     * 
+     * @return {String}
+     */
+    lib.kkr.getIframePosDataAttrName = function() {
+        return kkr_body_attr;
+    };
+
+    /**
+     * retrieves iframe offset/position data as stored in an attr of the body element.
+     *
+     * NB: this is only relevant to the child document!
+     * 
+     * @return {Object|null}
+     */
+    lib.kkr.getIframePosData         = function() {
+        var v = b.getAttribute(kkr_body_attr);
+
+        return v ? offset.decode(v) : null;
+    };
+
+
+    /**
+     * retrieves iframe offset/position data as stored in an attr of the body element.
+     *
+     * NB: this is only relevant to the child document!
+     * 
+     * @return {Object|null}
+     */
+    lib.kkr.getModalOffset          = function() {
+        try {
+            var v = lib.kkr.getIframePosData();
+
+            if (v.offset.top < v.scroll.top) {
+                v = pint(v.scroll.top - v.offset.top);
+
+                if (!isNaN(v)) {
+                    return v;
+                }
+            }
+        } catch (e) {}
+
+        return 0;
+    };    
 
     /**
      * The Parent half of a response iframe.
@@ -190,9 +480,7 @@
 
             // Add an event listener that will handle redrawing the child on resize.
             var that = this;
-            window.addEventListener('resize', function() {
-                that.sendWidth();
-            });
+            on('resize', function() { that.sendWidth(); });
         };
 
         /**
@@ -325,12 +613,13 @@
 
         // Add a listener for processing messages from the child.
         var that = this;
-        window.addEventListener('message', function(e) {
-            return that._processMessage(e);
-        }, false);
+        on('message', function(e) { that._processMessage(e); }, false);
 
         // Construct the iframe in the container element.
         this._constructIframe();
+
+        // store parent instance
+        parents.push(this);
 
         return this;
     };
@@ -343,7 +632,7 @@
      */
     lib.Child = function(config) {
         this.parentWidth = null;
-        this.id = null;
+        this.id = null || config.id;
 
         this.settings = {
             renderCallback: null,
@@ -527,9 +816,7 @@
 
         // Set up a listener to handle any incoming messages.
         var that = this;
-        window.addEventListener('message', function(e) {
-            that._processMessage(e);
-        }, false);
+        on('message', function(e) { that._processMessage(e); }, false);
 
         // If there's a callback function, call it.
         if (this.settings.renderCallback) {
@@ -539,16 +826,22 @@
         // Send the initial height to the parent.
         this.sendHeight();
 
-        // If we're configured to poll, create a setInterval to handle that.
-        if (this.settings.polling) {
-            window.setInterval(this.sendHeight, this.settings.polling);
-        }
+        // store child instance 
+        childs.push(this);
+
+        // set message listener for our custom/automatic position messager
+        this.onMessage('position', function(msg) {
+            b.setAttribute(kkr_body_attr, msg);
+        });
 
         return this;
     };
 
     // Initialize elements with pym data attributes
     _autoInit();
+
+    // Initialize custom polling functions
+    _initWatchers();
 
     return lib;
 });
