@@ -1,6 +1,9 @@
 /*global module:false*/
 module.exports = function(grunt) {
 
+  var banner = '/*! <%= pkg.name %> @ v<%= pkg.version %> from <%= pkg.repository.url %> - ' + 
+               '<%= grunt.template.today("yyyy-mm-dd") %> */\n';
+
   // Project configuration.
   grunt.initConfig({
     // Load package config  
@@ -45,8 +48,7 @@ module.exports = function(grunt) {
     },
     concat: {
         options: {
-            banner: '/*! <%= pkg.name %> - v<%= pkg.version %> - ' +
-                    '<%= grunt.template.today("yyyy-mm-dd") %> */\n'
+            banner: banner
         },
         unminified: {
             src: ['src/pym.js'],
@@ -55,8 +57,7 @@ module.exports = function(grunt) {
     },
     uglify: {
       options: {
-        banner: '/*! <%= pkg.name %> - v<%= pkg.version %> - ' +
-                '<%= grunt.template.today("yyyy-mm-dd") %> */\n'
+        banner: banner
       },
       minified: {
         files: {
